@@ -2,9 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api } from "@earendil-works/pi-ai";
 import type { CompactionEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { validateContextManagementHistory } from "./context-management.js";
 import type { RemoteCompactionProtocol, ResponsesCompactionProfile } from "./model-api.js";
 import { type JsonObject, validateCompactionItem } from "./protocol.js";
+import { validateStoredContextManagementHistory } from "./task-continuation.js";
 
 export const CHECKPOINT_KIND = "pi-codex-remote-compaction";
 export const CHECKPOINT_VERSION = 3;
@@ -153,7 +153,7 @@ export function parseCheckpointDetails(value: unknown): CodexCheckpointDetails |
   }
   try {
     if (value.protocol === "context-management") {
-      validateContextManagementHistory(value.replacementHistory, { byteBudget: REPLACEMENT_BYTE_BUDGET });
+      validateStoredContextManagementHistory(value.replacementHistory, { byteBudget: REPLACEMENT_BYTE_BUDGET });
     } else {
       validateCompactionItem(value.replacementHistory.at(-1));
     }

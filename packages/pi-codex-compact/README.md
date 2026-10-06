@@ -1,5 +1,7 @@
 # 🗜️ pi-codex-compact — Use Codex Remote Compaction in Pi
 
+This is the locally maintained CoordExp fork; the npm badge identifies upstream.
+
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-codex-compact)](https://www.npmjs.com/package/@narumitw/pi-codex-compact) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Use Responses compaction in Pi through Remote Compaction V2, unary `responses/compact`, or opt-in streaming `context_management`.
@@ -22,7 +24,13 @@ Pi still decides when compaction runs and keeps its normal `/compact`, threshold
 
 ## 📦 Install
 
-Install persistently from npm:
+For this fork, release from the repository root with
+`npm run release:codex-compact:local` and select the resulting versioned package
+under `.local/releases/`. Source review, commit, validation and adoption are
+documented in the repository's `docs/local-compaction.md`.
+Install only the compaction package; loading the monorepo root enables its other extensions.
+
+The unmodified upstream package is available from npm:
 
 ```bash
 pi install npm:@narumitw/pi-codex-compact
@@ -170,6 +178,9 @@ Pi still decides when to compact. Only the extension-owned compaction request ad
 Successful completed-item events are authoritative: a stream can emit several checkpoints while omitting them from terminal response output. The extension persists the latest checkpoint and its exact completed assistant/reasoning suffix only after successful completion (`response.completed` or Codex's `response.done`). Post-checkpoint reasoning must have non-empty encrypted content for stateless replay; terminal output can supply missing encryption before publication, otherwise the request follows the documented fallback/recovery policy. It never executes generated tools or silently truncates that suffix. Missing checkpoints, malformed/unsafe output, exceeded bounds, permission errors, and unsupported capabilities follow the same fallback/recovery policy; very short history may not cross the 1,024-token server threshold. The normal inference can consume quota even if no checkpoint is returned, and fallback/recovery can make an additional summarization request. Safe generated output is retained as provider context, not displayed as new assistant work.
 
 Ordinary requests do not enable server compaction or add maintenance instructions. To stop new Context Management attempts, select `auto` or another protocol while leaving the extension enabled for compatible replay. Older package versions do not understand this protocol's checkpoints; retain a version supporting Context Management for sessions containing them.
+
+During an unfinished automatic task, the local fork persists one deterministic continuation instruction after the completed maintenance output. Pi's existing execution loop continues without an extra user prompt or an additional extension-started turn. Manual compaction and automatic maintenance after a finished answer wait for the next prompt. Newer user instructions follow the continuation and remain authoritative; completed tools must be reconciled before further actions.
+Existing checkpoints remain readable in this fork. Checkpoints containing the new continuation item require this fork's reader; the unmodified upstream reader does not accept that item.
 
 ### ChatGPT OAuth rejection
 

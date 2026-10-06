@@ -19,6 +19,7 @@ import {
   type CodexCompactSettingsState,
   DEFAULT_CODEX_COMPACT_SETTINGS,
 } from "../src/settings.js";
+import { createTaskContinuationItem } from "../src/task-continuation.js";
 
 const model = {
   id: "gpt-5.6",
@@ -858,7 +859,11 @@ for (const reason of ["manual", "threshold", "overflow"] as const) {
     const parsed = parseCheckpointDetails(result.compaction.details);
     assert.ok(parsed);
     assert.equal(parsed.protocol, "context-management");
-    assert.deepEqual(parsed.replacementHistory, [serverCheckpoint, serverSuffix]);
+    assert.deepEqual(parsed.replacementHistory, [
+      serverCheckpoint,
+      serverSuffix,
+      ...(reason === "overflow" ? [createTaskContinuationItem()] : []),
+    ]);
     assert.equal(result.compaction.firstKeptEntryId, compactEvent.preparation.firstKeptEntryId);
     assert.equal(result.compaction.tokensBefore, compactEvent.preparation.tokensBefore);
     assert.deepEqual(result.compaction.usage, usage);

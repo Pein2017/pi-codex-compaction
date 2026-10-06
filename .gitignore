@@ -201,6 +201,7 @@ vite.config.ts.timestamp-*
 .vite/
 
 # Project
+.local/
 .pi/agent/
 .pi/skills/
 .pi/settings.json

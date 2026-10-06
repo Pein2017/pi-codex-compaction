@@ -41,6 +41,11 @@ import {
   type CodexCompactSettingsState,
   createCodexCompactSettingsRuntime,
 } from "./settings.js";
+import {
+  createTaskContinuationItem,
+  shouldContinueTask,
+  validateStoredContextManagementHistory,
+} from "./task-continuation.js";
 import { terminalText } from "./terminal.js";
 
 const STATUS_KEY = "codex-compact";
@@ -273,7 +278,7 @@ async function compactRemotely(
       },
     });
     if (!stillCurrent()) return { cancel: true };
-    const replacementHistory =
+    let replacementHistory =
       route.protocol === "context-management"
         ? validateContextManagementHistory(response.replacementHistory ?? [], {
             byteBudget: REPLACEMENT_BYTE_BUDGET,
@@ -282,6 +287,14 @@ async function compactRemotely(
         : buildReplacementHistory(response.compactedOutput?.slice(0, -1) ?? response.promptInput, response.item, {
             tokenBudget: settings.replacementTokenBudget,
           });
+    if (route.protocol === "context-management" && shouldContinueTask(event, ctx)) {
+      // The host will continue its existing run (or overflow retry). Put task
+      // intent after maintenance output; newer user input stays after this item.
+      replacementHistory = validateStoredContextManagementHistory(
+        [...replacementHistory, createTaskContinuationItem()],
+        { byteBudget: REPLACEMENT_BYTE_BUDGET, tokenBudget: settings.replacementTokenBudget },
+      );
+    }
     const details = createCheckpointDetails({
       provider: model.provider,
       api: route.api,
