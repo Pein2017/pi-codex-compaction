@@ -100,21 +100,20 @@ test("shared eager traversal follows static cycles but not dynamic or external e
   });
 });
 
-test("shared validation inventories exact static, re-export, dynamic and require imports", async () => {
-  await fixture(async (builder, root) => {
-    const output = join(root, "dist");
-    await mkdir(join(output, "chunks"), { recursive: true });
-    await writeFile(join(output, "chunks/present.ts"), `${banner}\nexport const value = 1;`);
-    await writeFile(join(output, "chunks/present.ts.map"), "{}");
-    await writeFile(join(output, "index.ts.map"), "{}");
-    const statements = [
-      (path: string) => `import "${path}";`,
-      (path: string) => `export { value } from "${path}";`,
-      (path: string) => `export * from "${path}";`,
-      (path: string) => `export const load = () => import("${path}");`,
-      (path: string) => `export const load = () => require("${path}");`,
-    ];
-    for (const statement of statements) {
+for (const [kind, statement] of [
+  ["static import", (path: string) => `import "${path}";`],
+  ["named re-export", (path: string) => `export { value } from "${path}";`],
+  ["wildcard re-export", (path: string) => `export * from "${path}";`],
+  ["dynamic import", (path: string) => `export const load = () => import("${path}");`],
+  ["require", (path: string) => `export const load = () => require("${path}");`],
+] as const) {
+  test(`shared validation inventories exact ${kind} targets`, async () => {
+    await fixture(async (builder, root) => {
+      const output = join(root, "dist");
+      await mkdir(join(output, "chunks"), { recursive: true });
+      await writeFile(join(output, "chunks/present.ts"), `${banner}\nexport const value = 1;`);
+      await writeFile(join(output, "chunks/present.ts.map"), "{}");
+      await writeFile(join(output, "index.ts.map"), "{}");
       await writeFile(join(output, "index.ts"), `${banner}\n${statement("./chunks/present.ts")}`);
       await builder.validateGeneratedFiles(output);
       for (const specifier of [
@@ -130,7 +129,15 @@ test("shared validation inventories exact static, re-export, dynamic and require
         await writeFile(join(output, "index.ts"), `${banner}\n${statement(specifier)}`);
         await assert.rejects(builder.validateGeneratedFiles(output), /no exact runtime target/u, statement(specifier));
       }
-    }
+    });
+  });
+}
+
+test("shared validation ignores import-like strings and comments", async () => {
+  await fixture(async (builder, root) => {
+    const output = join(root, "dist");
+    await mkdir(output);
+    await writeFile(join(output, "index.ts.map"), "{}");
     await writeFile(
       join(output, "index.ts"),
       `${banner}\nexport const text = './missing.ts'; // import './also-missing.ts'\n`,

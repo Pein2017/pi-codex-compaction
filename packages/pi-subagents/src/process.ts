@@ -653,8 +653,19 @@ async function executeProcess(
       truncated,
     };
   }
+  // Terminal RPC evidence owns the failure classification. Stderr can include
+  // startup warnings; retain it as bounded detail after the known reason.
+  const terminalFailure =
+    terminalStopReason === "length"
+      ? "Subagent output reached the model limit."
+      : assistantFailed
+        ? "Subagent model turn failed."
+        : settlement.completed && terminalStopReason !== "stop"
+          ? "Subagent settled without a terminal assistant result."
+          : undefined;
   const redactedStderr = truncateTail(redactAttachmentPaths(stderr.trim(), request), MAX_ERROR_BYTES);
   const combinedError = combineErrors(
+    terminalFailure,
     redactAttachmentPaths(settlement.launchError ?? "", request),
     redactAttachmentPaths(errorMessage, request),
     redactedStderr.text,
@@ -674,15 +685,7 @@ async function executeProcess(
   }
   const failure =
     error ||
-    (terminalStopReason === "length"
-      ? "Subagent output reached the model limit."
-      : assistantFailed
-        ? "Subagent model turn failed."
-        : settlement.completed
-          ? "Subagent settled without a terminal assistant result."
-          : settlement.code === 0
-            ? "Subagent exited without settling."
-            : `Subagent exited with code ${settlement.code}.`);
+    (settlement.code === 0 ? "Subagent exited without settling." : `Subagent exited with code ${settlement.code}.`);
   if (output) {
     return {
       state: "partial",

@@ -205,6 +205,30 @@ async function handle(command) {
   assert.match(missing.limitations.join("\n"), /malformed/i);
 });
 
+for (const [stopReason, state, expected] of [
+  ["length", "partial", /^Subagent output reached the model limit\./i],
+  ["error", "partial", /^Subagent model turn failed\./i],
+  ["toolUse", "partial", /^Subagent settled without a terminal assistant result\./i],
+  [undefined, "failed", /^Subagent settled without a terminal assistant result\./i],
+] as const) {
+  test(`runChild keeps the ${stopReason ?? "missing"} terminal reason ahead of stderr warnings`, async () => {
+    installFakePi(`
+async function handle(command) {
+  if (command.type !== "prompt") return;
+  respond(command);
+  console.error("fixture startup warning");
+  if (${JSON.stringify(stopReason)}) event(message("preserved evidence", ${JSON.stringify(stopReason)}));
+  event({ type: "agent_settled" });
+}
+`);
+    const result = await runChild(childRequest());
+    assert.equal(result.state, state);
+    assert.equal(result.result, stopReason ? "preserved evidence" : undefined);
+    assert.match(result.error ?? "", expected);
+    assert.match(result.error ?? "", /fixture startup warning/);
+  });
+}
+
 test("runChild ignores an oversized RPC event and preserves later terminal output", async () => {
   installFakePi(`
 async function handle(command) {

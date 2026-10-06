@@ -288,10 +288,13 @@ test("config path resolver returns Pi's tilde-aware absolute agent path", () => 
 
 test("bundled validator accepts valid TOML and bounds terminal-safe errors", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "pi-starship-skill-"));
+  // Local TOML validation needs no proxy. Exclude Node's independent startup
+  // warning from the validator-owned diagnostic bound, without muting warnings.
+  const env = { ...process.env, NODE_USE_ENV_PROXY: "0" };
   try {
     const validPath = path.join(directory, "pi-starship.toml");
     writeFileSync(validPath, 'format = "$model$directory"\n[model]\nstyle = "bold blue"\n');
-    const valid = spawnSync(process.execPath, [validatorPath, validPath], { encoding: "utf8" });
+    const valid = spawnSync(process.execPath, [validatorPath, validPath], { encoding: "utf8", env });
     assert.equal(valid.status, 0, valid.stderr);
     assert.match(valid.stdout, /Valid TOML/u);
 
@@ -299,6 +302,7 @@ test("bundled validator accepts valid TOML and bounds terminal-safe errors", () 
     writeFileSync(invalidPath, `[model\u001b]0;spoof\u0007\u202e${"x".repeat(5000)}\n`);
     const invalid = spawnSync(process.execPath, [validatorPath, invalidPath], {
       encoding: "utf8",
+      env,
     });
     assert.equal(invalid.status, 1);
     assert.match(invalid.stderr, /Invalid TOML/u);

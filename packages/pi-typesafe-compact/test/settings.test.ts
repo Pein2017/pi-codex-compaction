@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, test } from "vitest";
+import { afterEach, test, vi } from "vitest";
 import {
   createTypeSafeCompactSettingsRuntime,
   loadTypeSafeCompactSettings,
@@ -14,6 +14,11 @@ import {
 
 const roots: string[] = [];
 const execFileAsync = promisify(execFile);
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...fs, rename: vi.fn(fs.rename) };
+});
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -149,19 +154,20 @@ test("invalid API keys and aborted writes never replace the previous settings", 
   assert.equal(runtime.get().settings.apiKey, "old-secret");
 });
 
-test.runIf(process.platform !== "win32")(
-  "a failed atomic write preserves the previous file and effective state",
-  async () => {
-    const path = await fixturePath();
-    const runtime = createTypeSafeCompactSettingsRuntime(path);
-    await runtime.setApiKey("old-secret");
-    await chmod(dirname(path), 0o500);
-    try {
-      await assert.rejects(runtime.setApiKey("new-secret"), /EACCES|permission denied/iu);
-    } finally {
-      await chmod(dirname(path), 0o700);
-    }
-    assert.deepEqual(JSON.parse(await readFile(path, "utf8")), { apiKey: "old-secret" });
-    assert.equal(runtime.get().settings.apiKey, "old-secret");
-  },
-);
+test("a failed atomic write preserves the previous file and effective state, then recovers", async () => {
+  const path = await fixturePath();
+  const runtime = createTypeSafeCompactSettingsRuntime(path);
+  await runtime.setApiKey("old-secret");
+  const previousFile = await readFile(path, "utf8");
+  const previousState = runtime.get();
+  vi.mocked(rename).mockRejectedValueOnce(Object.assign(new Error("EACCES: publication denied"), { code: "EACCES" }));
+  await assert.rejects(runtime.setApiKey("new-secret"), /EACCES/iu);
+  await runtime.flush();
+  assert.equal(await readFile(path, "utf8"), previousFile);
+  assert.deepEqual(runtime.get(), previousState);
+  assert.deepEqual(await readdir(dirname(path)), ["pi-typesafe-compact.json"]);
+
+  await runtime.setApiKey("after-failure");
+  assert.deepEqual(JSON.parse(await readFile(path, "utf8")), { apiKey: "after-failure" });
+  assert.equal(runtime.get().settings.apiKey, "after-failure");
+});
