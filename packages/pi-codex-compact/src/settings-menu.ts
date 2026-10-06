@@ -9,6 +9,7 @@ type Screen = "main" | "settings" | "invalid";
 type Action =
   | "compact-now"
   | "set-enabled"
+  | "set-deferral"
   | "set-protocol"
   | "set-timeout"
   | "set-retries"
@@ -147,6 +148,14 @@ export function createCodexCompactMenu(
             action: "set-protocol",
           },
           {
+            id: "deferPostAnswerCompaction",
+            label: "Defer post-answer compaction",
+            description: "Experimental: compact completed answers before the next model request instead.",
+            currentValue: state.settings.deferPostAnswerCompaction ? "On" : "Off",
+            values: ["On", "Off"],
+            action: "set-deferral",
+          },
+          {
             id: "checkpointRecovery",
             label: "Checkpoint recovery",
             description:
@@ -206,6 +215,8 @@ export function createCodexCompactMenu(
         return { kind: "close" };
       },
       "set-enabled": ({ ctx, value, signal }) => update(runtime, ctx, { enabled: value === "On" }, signal),
+      "set-deferral": ({ ctx, value, signal }) =>
+        update(runtime, ctx, { deferPostAnswerCompaction: value === "On" }, signal),
       "set-protocol": ({ ctx, value, signal }) =>
         update(
           runtime,

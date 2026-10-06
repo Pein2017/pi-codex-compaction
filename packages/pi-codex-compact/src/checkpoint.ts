@@ -223,12 +223,19 @@ export function projectCheckpointContext(
   const timestamp = messages[summaryIndex].timestamp;
   let messageIndex = summaryIndex + 1;
   let fingerprintIndex = 0;
+  const retainedSystems: AgentMessage[] = [];
   while (fingerprintIndex < details.keptMessageFingerprints.length) {
     if (messageIndex >= messages.length) return undefined;
     const message = messages[messageIndex];
     if (fingerprintMessage(message) === details.keptMessageFingerprints[fingerprintIndex]) {
+      if (message.role === "system") retainedSystems.push(message);
       messageIndex += 1;
       fingerprintIndex += 1;
+      continue;
+    }
+    if (message.role === "system") {
+      retainedSystems.push(message);
+      messageIndex += 1;
       continue;
     }
     if (isOlderCompactionSummary(message, timestamp)) {
@@ -243,6 +250,7 @@ export function projectCheckpointContext(
   return [
     ...messages.slice(0, summaryIndex),
     markerMessage(details.checkpointId, timestamp),
+    ...retainedSystems,
     ...messages.slice(messageIndex),
   ];
 }

@@ -40,6 +40,9 @@ test("normalizes defaults and bounded user settings", () => {
     },
   );
   assert.equal(normalizeCodexCompactSettings({ protocol: "unknown" }), undefined);
+  assert.equal(normalizeCodexCompactSettings({ deferPostAnswerCompaction: true })?.deferPostAnswerCompaction, true);
+  for (const value of [null, 0, "true", {}, []])
+    assert.equal(normalizeCodexCompactSettings({ deferPostAnswerCompaction: value }), undefined);
   assert.equal(
     normalizeCodexCompactSettings({ apiProfiles: { "openai-codex-responses": "codex-responses-v1" } }),
     undefined,
@@ -104,6 +107,7 @@ test("serialized updates reread latest content, preserve unknown fields, and pub
     runtime.update({ enabled: false }),
     runtime.update({ maxRetries: 0 }),
     runtime.update({ protocol: "context-management" }),
+    runtime.update({ deferPostAnswerCompaction: true }),
   ]);
   await runtime.flush();
   const document = JSON.parse(await readFile(path, "utf8"));
@@ -111,6 +115,7 @@ test("serialized updates reread latest content, preserve unknown fields, and pub
   assert.equal(document.maxRetries, 0);
   assert.equal(document.external, "newer");
   assert.equal(document.protocol, "context-management");
+  assert.equal(document.deferPostAnswerCompaction, true);
   assert.equal((await runtime.reload()).settings.protocol, "context-management");
   assert.deepEqual(
     (await readdir(join(path, ".."))).filter((name) => name.endsWith(".tmp")),

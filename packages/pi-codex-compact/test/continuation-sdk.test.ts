@@ -54,7 +54,15 @@ function response(items: Item[], inputTokens: number): Response {
 }
 
 async function fixture(
-  options: { tool?: boolean; pauseMaintenance?: boolean; finalTokens?: number; maxNormalRequests?: number } = {},
+  options: {
+    tool?: boolean;
+    pauseMaintenance?: boolean;
+    finalTokens?: number;
+    maxNormalRequests?: number;
+    deferPostAnswerCompaction?: boolean;
+    overflow?: boolean;
+    queueAtRunEnd?: boolean;
+  } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "pi-continuation-sdk-"));
   const agentDir = join(root, "agent");
@@ -65,6 +73,8 @@ async function fixture(
   const maintenance: RequestBody[] = [];
   const errors: unknown[] = [];
   const reasons: string[] = [];
+  const requests: string[] = [];
+  const compactEvents: unknown[] = [];
   let toolCalls = 0;
   let resolveEntered!: () => void;
   let resolveRelease!: () => void;
@@ -79,7 +89,13 @@ async function fixture(
     process.env.PI_CODING_AGENT_DIR = agentDir;
     await writeFile(
       join(agentDir, "pi-codex-compact.json"),
-      JSON.stringify({ enabled: true, protocol: "context-management", maxRetries: 0, checkpointRecovery: "cancel" }),
+      JSON.stringify({
+        enabled: true,
+        protocol: "context-management",
+        maxRetries: 0,
+        checkpointRecovery: "cancel",
+        deferPostAnswerCompaction: options.deferPostAnswerCompaction ?? false,
+      }),
     );
     const settings = SettingsManager.inMemory({
       compaction: { enabled: true, reserveTokens: 1024, keepRecentTokens: 256 },
@@ -124,8 +140,21 @@ async function fixture(
       additionalExtensionPaths: [process.env.PI_COMPACT_TEST_ENTRY ?? join(packageRoot, "src/index.ts")],
       extensionFactories: [
         (pi) => {
-          pi.on("session_before_compact", (event) => {
+          let queued = false;
+          pi.on("agent_end", async () => {
+            if (options.queueAtRunEnd && !queued) {
+              queued = true;
+              await pi.sendUserMessage("QUEUED_AFTER_ANSWER_935: process this follow-up.", { deliverAs: "followUp" });
+            }
+          });
+          pi.on("session_before_compact", (event, ctx) => {
             reasons.push(event.reason);
+            compactEvents.push({
+              reason: event.reason,
+              willRetry: event.willRetry,
+              active: ctx.signal !== undefined,
+              tokens: event.preparation.tokensBefore,
+            });
           });
         },
       ],
@@ -195,6 +224,7 @@ async function fixture(
       assert.equal(new URL(request.url).origin, "http://127.0.0.1:1", "fixture must never contact a paid endpoint");
       const body = JSON.parse(await request.text()) as RequestBody;
       if (body.context_management) {
+        requests.push("compact");
         maintenance.push(body);
         assert.equal(maintenance.length, 1, "bounded fixture permits one compaction");
         resolveEntered();
@@ -205,7 +235,13 @@ async function fixture(
         );
       }
       normal.push(body);
+      requests.push("normal");
       assert.ok(normal.length <= (options.maxNormalRequests ?? 2), "bounded fixture task request limit");
+      if (options.overflow && normal.length === 1)
+        return Response.json(
+          { error: { code: "context_length_exceeded", message: "Input exceeds the context window" } },
+          { status: 400 },
+        );
       if (options.tool && normal.length === 1)
         return response(
           [
@@ -240,6 +276,8 @@ async function fixture(
       maintenance,
       errors,
       reasons,
+      requests,
+      compactEvents,
       entered,
       release: resolveRelease,
       async reopen() {
@@ -296,7 +334,7 @@ async function fixture(
 function checkpoint(f: Awaited<ReturnType<typeof fixture>>) {
   const entry = [...f.manager.getBranch()].reverse().find((entry) => entry.type === "compaction");
   assert.ok(entry && entry.type === "compaction", "real SDK must persist extension checkpoint");
-  return entry.details as { version: number; replacementHistory: Item[] };
+  return entry.details as { version: number; replacementHistory: Item[]; keptMessageFingerprints: string[] };
 }
 function finalText(f: Awaited<ReturnType<typeof fixture>>) {
   const entry = [...f.manager.getBranch()]
@@ -310,7 +348,7 @@ function finalText(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 test("real SDK continues the unfinished turn after mid-tool compaction without repeating the effect", async () => {
-  const f = await fixture({ tool: true });
+  const f = await fixture({ tool: true, deferPostAnswerCompaction: true });
   try {
     await f.session.prompt(`Run sdk_effect exactly once, then report ${taskAnswer}.`);
     assert.equal(f.toolCalls, 1);
@@ -332,7 +370,7 @@ test("real SDK continues the unfinished turn after mid-tool compaction without r
 });
 
 test("manual compaction persists maintenance history without starting a task turn", async () => {
-  const f = await fixture();
+  const f = await fixture({ deferPostAnswerCompaction: true });
   try {
     await f.session.compact();
     assert.deepEqual(f.reasons, ["manual"]);
@@ -346,7 +384,7 @@ test("manual compaction persists maintenance history without starting a task tur
   }
 });
 
-test("post-answer threshold maintenance does not restart a settled task", async () => {
+test("post-answer threshold maintenance is retained when deferral is disabled", async () => {
   const f = await fixture({ finalTokens: 7500 });
   try {
     await f.session.prompt("A settled task needs only a brief acknowledgement.");
@@ -361,8 +399,66 @@ test("post-answer threshold maintenance does not restart a settled task", async 
   }
 });
 
+for (const reopen of [false, true]) {
+  test(`completed answer defers compaction until the next prompt${reopen ? " after JSONL reopen" : ""}`, async () => {
+    const f = await fixture({ finalTokens: 7500, deferPostAnswerCompaction: true });
+    try {
+      await f.session.prompt("A settled task needs only a brief acknowledgement.");
+      assert.equal(f.maintenance.length, 0, "a completed answer must not issue maintenance inference");
+      assert.deepEqual(f.requests, ["normal"]);
+      assert.equal(f.manager.getBranch().filter((entry) => entry.type === "compaction").length, 0);
+      assert.equal(f.session.isIdle, true);
+      if (reopen) await f.reopen();
+      await f.session.prompt("NEXT_PROMPT_934: complete this new task.");
+      assert.deepEqual(f.requests, ["normal", "compact", "normal"], JSON.stringify(f.compactEvents));
+      assert.equal(f.maintenance.length, 1);
+      assert.match(JSON.stringify(f.normal[1].input), /NEXT_PROMPT_934/, "new prompt survives preflight compaction");
+      assert.match(JSON.stringify(f.normal[1].input), /OPAQUE_LOCAL_FIXTURE/);
+      assert.equal(finalText(f), "OK", "preflight compression does not manufacture an active-task continuation");
+      assert.equal(f.session.isIdle, true);
+      assert.deepEqual(f.errors, []);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("an agent_end follow-up compacts before the queued model request", async () => {
+  const f = await fixture({ finalTokens: 7500, deferPostAnswerCompaction: true, queueAtRunEnd: true });
+  try {
+    await f.session.prompt("A settled task needs only a brief acknowledgement.");
+    assert.deepEqual(f.requests, ["normal", "compact", "normal"]);
+    assert.match(JSON.stringify(f.normal[1].input), /QUEUED_AFTER_ANSWER_935/);
+    assert.match(JSON.stringify(f.normal[1].input), /OPAQUE_LOCAL_FIXTURE/);
+    assert.equal(f.session.isIdle, true);
+    assert.deepEqual(f.errors, []);
+  } finally {
+    await f.close();
+  }
+});
+
+test("deferral preserves a bounded context-overflow compact and retry", async () => {
+  const f = await fixture({ overflow: true, deferPostAnswerCompaction: true });
+  try {
+    await f.session.prompt("Complete the task after context recovery.");
+    assert.deepEqual(f.requests, ["normal", "compact", "normal"]);
+    assert.deepEqual(f.reasons, ["overflow"]);
+    assert.equal(f.maintenance.length, 1);
+    assert.match(
+      JSON.stringify(checkpoint(f).replacementHistory.at(-1)),
+      continuation,
+      JSON.stringify(f.compactEvents),
+    );
+    assert.match(JSON.stringify(f.normal[1].input), continuation, JSON.stringify(f.normal[1].input).slice(-1800));
+    assert.equal(finalText(f), taskAnswer);
+    assert.deepEqual(f.errors, []);
+  } finally {
+    await f.close();
+  }
+});
+
 test("newer steering queued during compaction follows the continuation anchor", async () => {
-  const f = await fixture({ tool: true, pauseMaintenance: true });
+  const f = await fixture({ tool: true, pauseMaintenance: true, deferPostAnswerCompaction: true });
   try {
     const run = f.session.prompt(`Run sdk_effect exactly once, then report ${taskAnswer}.`);
     await f.entered;
@@ -387,7 +483,7 @@ test("newer steering queued during compaction follows the continuation anchor", 
 });
 
 test("abort at the maintenance barrier publishes no checkpoint or additional task request", async () => {
-  const f = await fixture({ tool: true, pauseMaintenance: true });
+  const f = await fixture({ tool: true, pauseMaintenance: true, deferPostAnswerCompaction: true });
   try {
     const run = f.session.prompt(`Run sdk_effect exactly once, then report ${taskAnswer}.`);
     await f.entered;

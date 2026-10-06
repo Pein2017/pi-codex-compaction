@@ -1,13 +1,12 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Context, Model, Tool } from "@earendil-works/pi-ai";
 import {
-  buildContextEntries,
   buildSessionContext,
+  buildSessionProjection,
   convertToLlm,
   type ExtensionAPI,
   type ExtensionContext,
   type SessionBeforeCompactEvent,
-  sessionEntryToContextMessages,
 } from "@earendil-works/pi-coding-agent";
 import {
   buildReplacementHistory,
@@ -44,6 +43,7 @@ import {
 import {
   createTaskContinuationItem,
   shouldContinueTask,
+  shouldDeferThresholdCompaction,
   validateStoredContextManagementHistory,
 } from "./task-continuation.js";
 import { terminalText } from "./terminal.js";
@@ -71,12 +71,17 @@ function isCheckpointCompatible(
 
 function keptMessages(event: SessionBeforeCompactEvent): AgentMessage[] {
   const leafId = event.branchEntries.at(-1)?.id ?? null;
-  const contextEntries = buildContextEntries(event.branchEntries, leafId);
-  const keptIndex = contextEntries.findIndex((entry) => entry.id === event.preparation.firstKeptEntryId);
+  const contextEntries = buildSessionProjection(event.branchEntries, leafId).entries;
+  const keptIndex = contextEntries.findIndex((entry) => entry.sourceEntry.id === event.preparation.firstKeptEntryId);
   if (keptIndex < 0) {
     throw new Error("Pi compaction cut point is not present in the active context");
   }
-  return contextEntries.slice(keptIndex).flatMap(sessionEntryToContextMessages);
+  // Pi owns system declarations and can move/replace them when preparing the
+  // next prompt. Only retained conversation messages belong to replay matching.
+  return contextEntries
+    .slice(keptIndex)
+    .flatMap((entry) => entry.messages)
+    .filter((message) => message.role !== "system");
 }
 
 function activeTools(pi: ExtensionAPI): Tool[] {
@@ -402,6 +407,7 @@ export function createCodexCompactExtension(
       rejected: RejectedRoutes;
       sessionId: string;
       operation?: AbortController;
+      completedRun?: boolean;
     };
     const owners = new WeakMap<object, Owner>();
     const ownerFor = (ctx: ExtensionContext): Owner => {
@@ -504,13 +510,20 @@ export function createCodexCompactExtension(
     });
 
     pi.on("session_before_compact", (event, ctx) => {
-      const owner = ownerFor(ctx);
-      cancelOperation(ctx);
-      const operation = new AbortController();
-      owner.operation = operation;
       const settings = settingsRuntime.get().settings;
       const model = ctx.model;
       const route = resolveCompactionRoute(model, settings);
+      const owner = ownerFor(ctx);
+      if (
+        settings.deferPostAnswerCompaction &&
+        owner.completedRun &&
+        route.kind === "remote" &&
+        shouldDeferThresholdCompaction(event, ctx)
+      )
+        return { cancel: true };
+      cancelOperation(ctx);
+      const operation = new AbortController();
+      owner.operation = operation;
       const key = model && route.kind === "remote" ? rejectionRouteKey(model, route) : undefined;
       const isCurrent = () => {
         if (owners.get(ctx.sessionManager) !== owner || owner.operation !== operation || operation.signal.aborted)
@@ -537,6 +550,19 @@ export function createCodexCompactExtension(
         if (owner.operation === operation) owner.operation = undefined;
         operation.abort();
       });
+    });
+
+    pi.on("agent_end", (event, ctx) => {
+      const assistant = [...event.messages].reverse().find((message) => message.role === "assistant");
+      ownerFor(ctx).completedRun = assistant?.role === "assistant" && assistant.stopReason === "stop";
+    });
+
+    pi.on("input", (_event, ctx) => {
+      ownerFor(ctx).completedRun = false;
+    });
+
+    pi.on("before_agent_start", (_event, ctx) => {
+      ownerFor(ctx).completedRun = false;
     });
 
     pi.on("context", (event, ctx) => {

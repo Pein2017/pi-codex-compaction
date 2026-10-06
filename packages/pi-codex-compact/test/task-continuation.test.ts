@@ -6,6 +6,7 @@ import { createContextManagementCollector, validateContextManagementHistory } fr
 import {
   createTaskContinuationItem,
   shouldContinueTask,
+  shouldDeferThresholdCompaction,
   validateStoredContextManagementHistory,
 } from "../src/task-continuation.js";
 
@@ -49,6 +50,32 @@ test("continuation eligibility distinguishes manual, active, settled and overflo
       expected,
     );
   }
+});
+
+test("post-answer deferral excludes manual, active, overflow, error and aborted responses", () => {
+  const active = new AbortController().signal;
+  for (const [reason, signal, stopReason, expected] of [
+    ["threshold", undefined, "stop", true],
+    ["threshold", active, "stop", false],
+    ["threshold", undefined, "toolUse", false],
+    ["threshold", undefined, "error", false],
+    ["threshold", undefined, "aborted", false],
+    ["manual", undefined, "stop", false],
+    ["overflow", undefined, "stop", false],
+  ] as const) {
+    const event = {
+      reason,
+      branchEntries: [{ type: "message", message: { role: "assistant", stopReason } }],
+    } as SessionBeforeCompactEvent;
+    assert.equal(shouldDeferThresholdCompaction(event, { signal } as ExtensionContext), expected);
+  }
+  assert.equal(
+    shouldDeferThresholdCompaction(
+      { reason: "threshold", branchEntries: [] } as unknown as SessionBeforeCompactEvent,
+      { signal: undefined } as ExtensionContext,
+    ),
+    false,
+  );
 });
 
 test("continuation counts against total byte and suffix token budgets", () => {

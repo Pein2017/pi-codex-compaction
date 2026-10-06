@@ -117,6 +117,7 @@ test("settings screen exposes bounded controls and invalid files remain repairab
     [
       ["enabled", "On"],
       ["protocol", "Auto"],
+      ["deferPostAnswerCompaction", "Off"],
       ["checkpointRecovery", "Summarize"],
       ["requestTimeoutMs", "5 min"],
       ["maxRetries", "2"],
@@ -177,6 +178,7 @@ test("menu actions persist exact setting patches", async () => {
     value,
   });
   await menu.actions["set-enabled"](action("Off"));
+  await menu.actions["set-deferral"](action("On"));
   await menu.actions["set-protocol"](action("Responses Compact"));
   await menu.actions["set-protocol"](action("Context Management (experimental)"));
   await menu.actions["set-timeout"](action("10 min"));
@@ -185,6 +187,7 @@ test("menu actions persist exact setting patches", async () => {
   await menu.actions["set-notify"](action("Off"));
   assert.deepEqual(memory.patches, [
     { enabled: false },
+    { deferPostAnswerCompaction: true },
     { protocol: "responses-compact" },
     { protocol: "context-management" },
     { requestTimeoutMs: 600_000 },

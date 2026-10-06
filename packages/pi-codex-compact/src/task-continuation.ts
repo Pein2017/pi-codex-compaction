@@ -23,6 +23,21 @@ export function shouldContinueTask(event: SessionBeforeCompactEvent, ctx: Extens
   );
 }
 
+export function shouldDeferThresholdCompaction(event: SessionBeforeCompactEvent, ctx: ExtensionContext): boolean {
+  // The owner distinguishes a just-completed run from the next prompt's
+  // preflight. A live signal identifies active in-loop compaction.
+  const assistant = [...event.branchEntries]
+    .reverse()
+    .find((entry) => entry.type === "message" && entry.message.role === "assistant");
+  return (
+    event.reason === "threshold" &&
+    ctx.signal === undefined &&
+    assistant?.type === "message" &&
+    assistant.message.role === "assistant" &&
+    assistant.message.stopReason === "stop"
+  );
+}
+
 /** Provider output stays strict; only stored history may end with our exact item. */
 export function validateStoredContextManagementHistory(
   history: readonly unknown[],

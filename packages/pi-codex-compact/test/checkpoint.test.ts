@@ -255,6 +255,31 @@ test("does not skip unverified messages or newer compaction summaries", () => {
   assert.deepEqual(projected.at(-1), newerSummary);
 });
 
+test("replay preserves Pi-owned system declarations while matching retained conversation strictly", () => {
+  const first = user("first", 2);
+  const second = user("second", 3);
+  const after = user("new prompt", 5);
+  const system: AgentMessage = { role: "system", content: "Current instructions", timestamp: 4 };
+  const details = checkpoint([first, second]);
+  const summary = compactionSummary(fallbackSummary(details.checkpointId), 4);
+  const projected = project([summary, first, system, second, after], details);
+  assert.ok(projected);
+  assert.deepEqual(projected.slice(1), [system, after]);
+  assert.equal(project([summary, first, system, user("changed", 3), after], details), undefined);
+  const legacy = checkpoint([first, system, second]);
+  assert.deepEqual(
+    project([compactionSummary(fallbackSummary(legacy.checkpointId), 4), first, system, second, after], legacy)?.slice(
+      1,
+    ),
+    [system, after],
+  );
+  assert.equal(
+    project([summary, first, second, after], legacy),
+    undefined,
+    "missing legacy fingerprints stay fail-closed",
+  );
+});
+
 test("matches stored summary fingerprints before treating old summaries as structural", () => {
   const storedSummary = compactionSummary("fingerprinted summary", 1);
   const kept = user("kept", 2);

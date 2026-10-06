@@ -94,6 +94,7 @@ There is no environment-variable or project-level override.
 ```json
 {
   "enabled": true,
+  "deferPostAnswerCompaction": false,
   "protocol": "auto",
   "apiProfiles": {
     "custom-responses": "codex-responses-v1"
@@ -109,6 +110,7 @@ There is no environment-variable or project-level override.
 | Setting | Default | Accepted values | Behavior | Recommendation |
 | --- | ---: | --- | --- | --- |
 | `enabled` | `true` | Boolean | Attempt a supported remote compaction route. | Keep enabled unless diagnosing provider behavior. |
+| `deferPostAnswerCompaction` | `false` | Boolean | Experimental: defer threshold compaction after a completed answer until the next prompt's preflight. | Enable to let completed answers settle immediately; the next prompt waits for required compaction before inference. |
 | `protocol` | `"auto"` | `"auto"`, `"remote-v2"`, `"responses-compact"`, or `"context-management"` | Select by API or force one remote protocol. | Keep `auto` for existing routing; explicitly select experimental Context Management only on a compatible backend. |
 | `apiProfiles` | `{}` | Object mapping a custom API id to `"codex-responses-v1"` | Explicitly opts a non-built-in API into Codex-compatible request fields and replay. | Leave empty unless the provider documents Codex Responses compatibility. |
 | `requestTimeoutMs` | `300000` | Integer from 30,000 to 600,000 ms | Bound one extension-owned remote request. | Keep five minutes; increase only for a consistently slow connection. |
@@ -125,6 +127,12 @@ On Unix, temporary files use mode `0600`.
 Malformed, invalid, oversized, or symlinked settings files remain unchanged.
 Defaults stay active, and the menu remains read-only until the file is fixed and Pi is reloaded.
 Separate Pi processes do not share a mutation lock; a detected concurrent edit is rejected so the user can reopen Settings and retry.
+
+### Experimental completed-answer deferral
+
+Enable **Defer post-answer compaction** in `/codex-compact` → **Settings**, or set `"deferPostAnswerCompaction": true` and reload Pi. A normally finished answer can settle without a threshold compaction request. The next prompt compacts first, before its normal model request; reopening the saved session preserves that ordering. This applies only to supported remote routes. Turning remote compaction off or selecting an unsupported model retains Pi-native scheduling.
+
+Manual `/compact` still executes immediately and waits for the next prompt. Threshold compaction during active work, queued follow-ups, context-overflow recovery and cancellation retain their existing behavior. This scheduling policy is qualified with the installed Pi SDK; it does not change Pi's threshold or establish parity with every Codex configuration.
 
 ### Relationship to Codex configuration
 
@@ -179,7 +187,7 @@ Successful completed-item events are authoritative: a stream can emit several ch
 
 Ordinary requests do not enable server compaction or add maintenance instructions. To stop new Context Management attempts, select `auto` or another protocol while leaving the extension enabled for compatible replay. Older package versions do not understand this protocol's checkpoints; retain a version supporting Context Management for sessions containing them.
 
-During an unfinished automatic task, the local fork persists one deterministic continuation instruction after the completed maintenance output. Pi's existing execution loop continues without an extra user prompt or an additional extension-started turn. Manual compaction and automatic maintenance after a finished answer wait for the next prompt. Newer user instructions follow the continuation and remain authoritative; completed tools must be reconciled before further actions.
+During an unfinished automatic task, the local fork persists one deterministic continuation instruction after the completed maintenance output. Pi's existing execution loop continues without an extra user prompt or an additional extension-started turn. Manual compaction and automatic maintenance after a finished answer wait for the next prompt; [completed-answer deferral](#experimental-completed-answer-deferral) can also postpone the maintenance request itself. Newer user instructions follow the continuation and remain authoritative; completed tools must be reconciled before further actions.
 Existing checkpoints remain readable in this fork. Checkpoints containing the new continuation item require this fork's reader; the unmodified upstream reader does not accept that item.
 
 ### ChatGPT OAuth rejection

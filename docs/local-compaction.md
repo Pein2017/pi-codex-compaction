@@ -37,9 +37,21 @@ while idle. Never reload an active user's session as part of installation.
 
 Automatic compaction during an unfinished task restores one deterministic task
 continuation after the checkpoint and completed maintenance output. Manual and
-post-answer maintenance stay idle. Newer real user input follows the continuation.
+post-answer maintenance stay idle. The shared profile enables experimental
+`deferPostAnswerCompaction`: a completed answer settles without threshold
+maintenance, and Pi's next prompt preflight compacts before inference, including
+after JSONL reopen. Manual, active-task, queued follow-up and overflow behavior
+remain unchanged; disabling remote compaction retains Pi-native scheduling.
+Newer real user input follows the continuation.
 The host execution loop owns retries and tool execution; the plugin starts no
 additional turn. Existing v3 checkpoints without the continuation remain valid.
+
+Checkpoint replay matches retained conversation messages from Pi's public session
+projection. Pi-owned system declarations remain available even when prompt
+preparation moves or replaces them, and responses omitted by context edits are
+excluded. Changed conversation fingerprints and missing legacy fingerprints
+continue to reject replay. Compression intentionally starts a new request prefix;
+ordinary subsequent replay preserves that prefix and ordered newer user input.
 
 Deterministic SDK regressions establish ordering, persistence, cancellation and
 tool execution counts. A bounded hosted smoke establishes the tested model's
@@ -80,3 +92,22 @@ The single hosted attempt timed out on its first normal request, before any tool
 or compaction ran. Automatic continuation through a real hosted checkpoint remains
 **HOLD**. Deterministic success does not clear that boundary. The failed receipt
 is `.local/qualification/continuation-9UkwKX/result.json`; no retry was made.
+
+## Completed-answer scheduling qualification on 2026-10-06
+
+The scheduling candidate passes all ten real continuation SDK cases using Pi
+1.0.3 and the generated `dist/index.ts` through Jiti. Added cases prove no request
+after a settled answer, compaction before the next prompt's normal request,
+JSONL reopen, queued follow-ups and bounded overflow recovery. The old producer
+fails the new deferral and replay checks; receipts are
+`.local/defer-settled-sdk103-red.log` and
+`.local/defer-settled-sdk103-built.log`. Settings, menu and strict checkpoint
+fingerprint regressions also pass in the repository suite.
+
+`npm run check` passes. The full `npm test` run reports 6,414 passing and four
+failing tests, all in the unchanged Starship, Subagents, Typesafe Compact and
+runtime-builder areas already reproduced against the upstream baseline above.
+Current logs are `.local/defer-settled-check-green.log` and
+`.local/defer-settled-test.log`. Pack dry-run metadata confirms the generated
+entrypoint and lazy menu chunk. No paid request was added; hosted continuation
+remains HOLD.

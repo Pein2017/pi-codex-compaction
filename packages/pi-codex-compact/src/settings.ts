@@ -10,6 +10,7 @@ export const MAX_SETTINGS_BYTES = 64 * 1024;
 
 export interface CodexCompactSettings {
   enabled: boolean;
+  deferPostAnswerCompaction: boolean;
   protocol: RemoteCompactionProtocolSetting;
   apiProfiles: Record<string, "codex-responses-v1">;
   requestTimeoutMs: number;
@@ -21,6 +22,7 @@ export interface CodexCompactSettings {
 
 export const DEFAULT_CODEX_COMPACT_SETTINGS: Readonly<CodexCompactSettings> = Object.freeze({
   enabled: true,
+  deferPostAnswerCompaction: false,
   protocol: "auto",
   apiProfiles: {},
   requestTimeoutMs: 300_000,
@@ -110,6 +112,8 @@ function normalizeApiProfiles(value: unknown): Record<string, "codex-responses-v
 export function normalizeCodexCompactSettings(value: unknown): CodexCompactSettings | undefined {
   if (!isRecord(value)) return undefined;
   if (Object.hasOwn(value, "enabled") && typeof value.enabled !== "boolean") return undefined;
+  if (Object.hasOwn(value, "deferPostAnswerCompaction") && typeof value.deferPostAnswerCompaction !== "boolean")
+    return undefined;
   if (
     Object.hasOwn(value, "protocol") &&
     value.protocol !== "auto" &&
@@ -140,6 +144,10 @@ export function normalizeCodexCompactSettings(value: unknown): CodexCompactSetti
   return {
     checkpointRecovery: value.checkpointRecovery === "cancel" ? "cancel" : "summarize",
     enabled: typeof value.enabled === "boolean" ? value.enabled : DEFAULT_CODEX_COMPACT_SETTINGS.enabled,
+    deferPostAnswerCompaction:
+      typeof value.deferPostAnswerCompaction === "boolean"
+        ? value.deferPostAnswerCompaction
+        : DEFAULT_CODEX_COMPACT_SETTINGS.deferPostAnswerCompaction,
     protocol:
       value.protocol === "remote-v2" ||
       value.protocol === "responses-compact" ||
