@@ -1,7 +1,12 @@
 # 🧩 Pi Extensions for the Pi Coding Agent
 
-This is the locally maintained CoordExp fork. Compaction runtime and releases
-are owned here; see [local compaction ownership](docs/local-compaction.md).
+This is [Pein2017/pi-codex-compaction](https://github.com/Pein2017/pi-codex-compaction),
+a maintained fork of `narumiruna/pi-extensions` focused on Pi compaction through
+compatible Codex/Responses backends. Development uses `coordexp/main`; see
+[fork maintenance](docs/fork-maintenance.md) for upstream synchronization and
+[local compaction ownership](docs/local-compaction.md) for runtime releases.
+The rest of this catalog is retained upstream documentation, not a fork-wide
+support or qualification claim. This fork does not publish the upstream npm scope.
 
 [![npm scope](https://img.shields.io/badge/npm-@narumitw-blue)](https://www.npmjs.com/org/narumitw) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 

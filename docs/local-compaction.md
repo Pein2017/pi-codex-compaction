@@ -2,8 +2,10 @@
 
 This independent CoordExp repository maintains `packages/pi-codex-compact` from
 `narumiruna/pi-extensions`. The `upstream` remote retains source provenance;
-local development and release do not publish to GitHub or npm. Other packages
-are retained upstream source and build dependencies, not installed extensions.
+reviewed source is maintained at `Pein2017/pi-codex-compaction` under the
+[fork maintenance policy](fork-maintenance.md). Local release does not publish to
+npm or automatically adopt runtime changes. Other packages are retained upstream
+source and build dependencies, not installed extensions.
 
 ## Runtime and releases
 

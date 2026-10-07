@@ -20,9 +20,10 @@ jobs:
   release:
     name: Create version PR or publish packages
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      github.repository == 'narumiruna/pi-extensions' &&
+      (github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.conclusion == 'success')
+      github.event.workflow_run.conclusion == 'success'))
     runs-on: ubuntu-latest
 
     steps:
