@@ -1,7 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api } from "@earendil-works/pi-ai";
-import type { CompactionEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
+import {
+  buildSessionProjection,
+  type CompactionEntry,
+  type SessionEntry,
+  sessionEntryToContextMessages,
+} from "@earendil-works/pi-coding-agent";
 import type { RemoteCompactionProtocol, ResponsesCompactionProfile } from "./model-api.js";
 import { type JsonObject, validateCompactionItem } from "./protocol.js";
 import { validateStoredContextManagementHistory } from "./task-continuation.js";
@@ -211,7 +216,81 @@ function isOlderCompactionSummary(message: AgentMessage, timestamp: number): boo
   );
 }
 
+// Legacy producers fingerprinted raw retained messages, including responses
+// omitted by context_edit. Repair only a complete, ordered raw-span binding;
+// looking for an omitted hash elsewhere on the branch would admit duplicates
+// outside firstKeptEntryId or silently swallow unexplained missing messages.
+function omissionAdjustedDetails(
+  branchEntries: readonly SessionEntry[],
+  details: CodexCheckpointDetails,
+  checkpointSummary: string,
+): CodexCheckpointDetails | undefined {
+  const ids = new Set<string>();
+  for (let index = 0; index < branchEntries.length; index++) {
+    const entry = branchEntries[index];
+    if (ids.has(entry.id) || (index > 0 && entry.parentId !== branchEntries[index - 1].id)) return undefined;
+    ids.add(entry.id);
+  }
+  const checkpoint = latestCheckpoint(branchEntries);
+  if (
+    !checkpoint ||
+    checkpoint.entry.summary !== checkpointSummary ||
+    JSON.stringify(stableValue(checkpoint.details)) !== JSON.stringify(stableValue(details))
+  )
+    return undefined;
+  const checkpointIndex = branchEntries.findIndex((entry) => entry.id === checkpoint.entry.id);
+  const keptIndex = branchEntries.findIndex((entry) => entry.id === checkpoint.entry.firstKeptEntryId);
+  if (keptIndex < 0 || keptIndex >= checkpointIndex) return undefined;
+  const projection = buildSessionProjection([...branchEntries], branchEntries.at(-1)?.id ?? null);
+  const projectedById = new Map(projection.entries.map((entry) => [entry.sourceEntry.id, entry.messages]));
+  const edits = new Map(
+    projection.entries.flatMap(({ sourceEntry }) =>
+      sourceEntry.type === "context_edit" ? [[sourceEntry.targetId, sourceEntry] as const] : [],
+    ),
+  );
+  const rawSpan = branchEntries.slice(keptIndex, checkpointIndex).flatMap((entry) =>
+    sessionEntryToContextMessages(entry)
+      .filter((message) => message.role !== "system")
+      .map((message) => ({ entry, message, fingerprint: fingerprintMessage(message) })),
+  );
+  if (
+    rawSpan.length !== details.keptMessageFingerprints.length ||
+    rawSpan.some((item, index) => item.fingerprint !== details.keptMessageFingerprints[index])
+  )
+    return undefined;
+  const fingerprints: string[] = [];
+  let omitted = false;
+  for (const { entry, message, fingerprint } of rawSpan) {
+    const projected = projectedById.get(entry.id);
+    const editable =
+      entry.type === "custom_message" ||
+      (entry.type === "message" &&
+        (message.role === "user" || message.role === "assistant" || message.role === "toolResult"));
+    if (editable && projected?.length === 0 && edits.get(entry.id)?.replacement === null) {
+      omitted = true;
+      continue;
+    }
+    // Replacements, structural disappearance, and missing raw evidence are not
+    // omission proofs, even when some other retained response was omitted.
+    if (!projected?.some((candidate) => fingerprintMessage(candidate) === fingerprint)) return undefined;
+    fingerprints.push(fingerprint);
+  }
+  return omitted ? { ...details, keptMessageFingerprints: fingerprints } : undefined;
+}
+
 export function projectCheckpointContext(
+  messages: readonly AgentMessage[],
+  details: CodexCheckpointDetails,
+  checkpointSummary: string,
+  branchEntries?: readonly SessionEntry[],
+): AgentMessage[] | undefined {
+  const strict = projectMatchingCheckpointContext(messages, details, checkpointSummary);
+  if (strict || !branchEntries) return strict;
+  const adjusted = omissionAdjustedDetails(branchEntries, details, checkpointSummary);
+  return adjusted ? projectMatchingCheckpointContext(messages, adjusted, checkpointSummary) : undefined;
+}
+
+function projectMatchingCheckpointContext(
   messages: readonly AgentMessage[],
   details: CodexCheckpointDetails,
   checkpointSummary: string,

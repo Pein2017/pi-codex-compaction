@@ -122,7 +122,7 @@ function projectedCurrentMessages(
   ) {
     throw new Error("The active opaque checkpoint belongs to a different Responses model");
   }
-  const projected = projectCheckpointContext(session.messages, prior.details, prior.entry.summary);
+  const projected = projectCheckpointContext(session.messages, prior.details, prior.entry.summary, event.branchEntries);
   if (!projected) {
     throw new Error("The previous opaque checkpoint could not be projected safely");
   }
@@ -602,7 +602,12 @@ export function createCodexCompactExtension(
       const settings = settingsRuntime.get().settings;
       const checkpoint = activeCheckpoint(ctx);
       if (!checkpoint || !isCheckpointCompatible(checkpoint.details, ctx.model, settings)) return undefined;
-      const messages = projectCheckpointContext(event.messages, checkpoint.details, checkpoint.entry.summary);
+      const messages = projectCheckpointContext(
+        event.messages,
+        checkpoint.details,
+        checkpoint.entry.summary,
+        ctx.sessionManager.getBranch(),
+      );
       return messages ? { messages } : undefined;
     });
 
