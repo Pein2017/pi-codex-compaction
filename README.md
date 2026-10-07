@@ -2,7 +2,7 @@
 
 This is [Pein2017/pi-codex-compaction](https://github.com/Pein2017/pi-codex-compaction),
 a maintained fork of `narumiruna/pi-extensions` focused on Pi compaction through
-compatible Codex/Responses backends. Development uses `coordexp/main`; see
+compatible Codex/Responses backends. Development uses `main` tracking `origin/main`; see
 [fork maintenance](docs/fork-maintenance.md) for upstream synchronization and
 [local compaction ownership](docs/local-compaction.md) for runtime releases.
 The rest of this catalog is retained upstream documentation, not a fork-wide

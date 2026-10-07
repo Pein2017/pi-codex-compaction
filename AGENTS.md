@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-- Read `docs/fork-maintenance.md` before upstream integration, source publication or runtime adoption; target `Pein2017/pi-codex-compaction` and preserve its `coordexp/main` development branch.
+- Read `docs/fork-maintenance.md` before upstream integration, source publication or runtime adoption; target `Pein2017/pi-codex-compaction` and preserve its `main` development branch tracking `origin/main`.
 
 ## Documentation
 

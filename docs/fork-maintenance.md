@@ -12,9 +12,9 @@
 - Canonical existing checkout: `/data/CoordExp/codex-tools/pi-extensions`.
   Do not relocate it merely to match the GitHub name: selected runtime releases
   and recovery pointers already refer to this physical root.
-- Default maintained remote branch: `coordexp/main`. The existing local `main`
-  tracks `origin/coordexp/main`; fresh clones use `coordexp/main` locally too.
-  The fork's inherited `main` is not our development or deployment branch.
+- Default maintained branch: `main`; local `main` tracks `origin/main`.
+  The former inherited `main` is preserved as
+  `history/main-before-unification-20261007`, not merged into maintained source.
 - Consequential future changes and upstream integration plans belong to this
   repository's local `openspec/`, not its parent CoordExp checkout. Small fixes
   need no retrospective planning artifacts.
@@ -35,7 +35,7 @@ cd pi-codex-compaction
 git remote add upstream https://github.com/narumiruna/pi-extensions.git
 git remote set-url --push upstream no_push://narumiruna/pi-extensions
 git config remote.pushDefault origin
-git branch --set-upstream-to=origin/coordexp/main coordexp/main
+git branch --set-upstream-to=origin/main main
 ```
 
 Name the repository explicitly in GitHub CLI operations; do not rely on implicit
@@ -52,13 +52,13 @@ reset, force-sync or rebase published development history. For a clean checkout,
 prepare a reviewed merge on a separate branch:
 
 ```bash
-git fetch --no-tags origin coordexp/main
-git merge --ff-only origin/coordexp/main
+git fetch --no-tags origin main
+git merge --ff-only origin/main
 git switch -c sync/upstream-YYYYMMDD
 git merge --no-ff upstream/main
 # Resolve contracts explicitly; validate affected package and real SDK consumers.
 # Push/open a PR only under the applicable authorization:
-gh pr create --repo Pein2017/pi-codex-compaction --base coordexp/main
+gh pr create --repo Pein2017/pi-codex-compaction --base main
 ```
 
 A broad upstream merge is not automatically qualified by upstream CI. Preserve
@@ -91,8 +91,15 @@ or a turnkey provisioned runtime.
 The maintained branch starts from local repair commit `6eeaae46`, preserving all
 five local commits since baseline `87f29eaf`. At bootstrap, fetched upstream
 `63dc5ec6` contains 106 commits absent from that baseline. They are retained via
-`upstream/main` and the fork's inherited `main`, but are **not integrated or
-qualified** by this bootstrap. A separate reviewed merge is required.
+`upstream/main` and the fork's preserved historical branch, but are **not
+integrated or qualified** by this bootstrap. A separate reviewed merge is required.
+
+On 2026-10-07, the user authorized main-branch unification. GitHub branch rename
+preserved upstream tip `63dc5ec6` under
+`history/main-before-unification-20261007` and renamed maintained `coordexp/main`
+to `main`, retaining tip `6c6adab7` without merge or force-push. Local `main` now
+tracks `origin/main`. Historical receipts describing the earlier branch remain
+unchanged.
 
 The already selected local compaction release remains unchanged. Its package and
 installed-SDK checks do not establish hosted reliability or a passing complete
