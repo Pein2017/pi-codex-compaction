@@ -18,6 +18,8 @@ export interface CodexCompactSettings {
   replacementTokenBudget: number;
   notifyOnFallback: boolean;
   checkpointRecovery: "summarize" | "cancel";
+  requestDiagnostics: boolean;
+  preserveCacheAffinity: boolean;
 }
 
 export const DEFAULT_CODEX_COMPACT_SETTINGS: Readonly<CodexCompactSettings> = Object.freeze({
@@ -30,6 +32,8 @@ export const DEFAULT_CODEX_COMPACT_SETTINGS: Readonly<CodexCompactSettings> = Ob
   replacementTokenBudget: 64_000,
   notifyOnFallback: true,
   checkpointRecovery: "summarize",
+  requestDiagnostics: false,
+  preserveCacheAffinity: false,
 });
 
 const LIMITS = Object.freeze({
@@ -132,6 +136,12 @@ export function normalizeCodexCompactSettings(value: unknown): CodexCompactSetti
   if (Object.hasOwn(value, "notifyOnFallback") && typeof value.notifyOnFallback !== "boolean") {
     return undefined;
   }
+  if (Object.hasOwn(value, "requestDiagnostics") && typeof value.requestDiagnostics !== "boolean") {
+    return undefined;
+  }
+  if (Object.hasOwn(value, "preserveCacheAffinity") && typeof value.preserveCacheAffinity !== "boolean") {
+    return undefined;
+  }
   if (Object.hasOwn(value, "apiProfiles") && normalizeApiProfiles(value.apiProfiles) === undefined) return undefined;
   for (const [field, limits] of Object.entries(LIMITS) as [
     keyof typeof LIMITS,
@@ -168,6 +178,11 @@ export function normalizeCodexCompactSettings(value: unknown): CodexCompactSetti
       typeof value.notifyOnFallback === "boolean"
         ? value.notifyOnFallback
         : DEFAULT_CODEX_COMPACT_SETTINGS.notifyOnFallback,
+    preserveCacheAffinity: value.preserveCacheAffinity === true,
+    requestDiagnostics:
+      typeof value.requestDiagnostics === "boolean"
+        ? value.requestDiagnostics
+        : DEFAULT_CODEX_COMPACT_SETTINGS.requestDiagnostics,
   };
 }
 

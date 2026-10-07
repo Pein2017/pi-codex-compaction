@@ -6,6 +6,8 @@ import { COMPACTION_MAINTENANCE_MESSAGE } from "../src/context-management.js";
 import type { RemoteCompactionProtocol } from "../src/model-api.js";
 import { MAX_SSE_BYTES } from "../src/protocol.js";
 import { requestRemoteCompaction } from "../src/remote.js";
+import type { RemoteCompactionRequest } from "../src/remote-types.js";
+import type { RequestObservationEvent } from "../src/request-observation.js";
 import { normalizeCodexCompactSettings } from "../src/settings.js";
 
 const protocol: RemoteCompactionProtocol = "context-management";
@@ -58,7 +60,7 @@ function sse(items: unknown[], terminal: Record<string, unknown> = {}): Response
     headers: { "content-type": "text/event-stream" },
   });
 }
-async function request(fetch: typeof globalThis.fetch, options = {}) {
+async function request(fetch: typeof globalThis.fetch, options: Partial<RemoteCompactionRequest> = {}) {
   return requestRemoteCompaction({
     provider: await provider(),
     model,
@@ -80,8 +82,10 @@ test("server compaction is an explicit opt-in setting, not a new auto route", ()
 
 test("stream-only checkpoints select the latest event and retain its exact suffix", async () => {
   let payload: Record<string, unknown> | undefined;
+  let fetches = 0;
   const original = structuredClone(context);
   const result = await request(async (input, init) => {
+    fetches += 1;
     assert.equal(String(input), "https://api.openai.com/v1/responses");
     payload = JSON.parse(String(init?.body));
     assert.deepEqual(payload?.context_management, [{ type: "compaction", compact_threshold: 1024 }]);
@@ -92,6 +96,7 @@ test("stream-only checkpoints select the latest event and retain its exact suffi
     assert.doesNotMatch(JSON.stringify(payload), /compaction_trigger/);
     return sse([first, { ...suffix, id: "msg_before_latest" }, latest, suffix]);
   });
+  assert.equal(fetches, 1);
   assert.deepEqual(result.item, latest);
   assert.deepEqual((result as { replacementHistory?: unknown[] }).replacementHistory, [latest, suffix]);
   assert.equal(result.usage.totalTokens, 12);
@@ -305,6 +310,46 @@ test("transient retry stays bounded and collects only the successful response", 
   );
   assert.equal(requests, 2);
   assert.deepEqual(result.replacementHistory, [latest]);
+});
+
+test("retried raw terminal attribution stays unknown when the supplied fetch is not auditable", async () => {
+  let requests = 0;
+  const observations: RequestObservationEvent[] = [];
+  const result = await request(
+    async (_input, init) => {
+      requests += 1;
+      assert.equal(typeof init?.body, "string");
+      if (requests === 1) return new Response("unavailable", { status: 503, headers: { "retry-after": "0" } });
+      return sse([latest]);
+    },
+    {
+      maxRetries: 1,
+      requestObservation: {
+        sessionId: "retry-session",
+        provider: model.provider,
+        api: model.api,
+        model: model.id,
+        httpFinalEligible: false,
+        canCorrelateFetch: false,
+        emit: (event) => observations.push(event),
+      },
+    },
+  );
+  const dispatches = observations.filter((event) => event.phase === "dispatch");
+  const terminal = observations.find((event) => event.phase === "terminal");
+  assert.equal(requests, 2);
+  assert.deepEqual(result.replacementHistory, [latest]);
+  assert.equal(dispatches.length, 2);
+  assert.ok(dispatches.every((event) => event.phase === "dispatch" && event.coverage === "unknown"));
+  assert.notEqual(dispatches[0]?.attemptId, dispatches[1]?.attemptId);
+  assert.ok(terminal?.phase === "terminal");
+  assert.equal(terminal.status, "completed");
+  assert.equal(terminal.attemptId, "unknown");
+  assert.equal(terminal.responseId, "resp_fixture");
+  assert.ok(observations.some((event) => event.phase === "unobserved" && event.reason === "attribution-unknown"));
+  assert.ok(observations.some((event) => event.phase === "unobserved" && event.reason === "custom-fetch"));
+  assert.equal(terminal.operationId, dispatches[0]?.operationId);
+  assert.doesNotMatch(JSON.stringify(observations), /fixture-key|unavailable/);
 });
 
 for (const failure of [

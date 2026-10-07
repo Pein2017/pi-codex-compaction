@@ -123,6 +123,8 @@ test("settings screen exposes bounded controls and invalid files remain repairab
       ["maxRetries", "2"],
       ["replacementTokenBudget", "64K tokens"],
       ["notifyOnFallback", "On"],
+      ["preserveCacheAffinity", "Off"],
+      ["requestDiagnostics", "Off"],
     ],
   );
 
@@ -185,6 +187,9 @@ test("menu actions persist exact setting patches", async () => {
   await menu.actions["set-retries"](action("1"));
   await menu.actions["set-retention"](action("96K tokens"));
   await menu.actions["set-notify"](action("Off"));
+  await menu.actions["set-request-diagnostics"](action("On"));
+  await menu.actions["set-cache-affinity"](action("On"));
+  await menu.actions["set-cache-affinity"](action("Off"));
   assert.deepEqual(memory.patches, [
     { enabled: false },
     { deferPostAnswerCompaction: true },
@@ -194,6 +199,9 @@ test("menu actions persist exact setting patches", async () => {
     { maxRetries: 1 },
     { replacementTokenBudget: 96_000 },
     { notifyOnFallback: false },
+    { requestDiagnostics: true },
+    { preserveCacheAffinity: true },
+    { preserveCacheAffinity: false },
   ]);
 });
 

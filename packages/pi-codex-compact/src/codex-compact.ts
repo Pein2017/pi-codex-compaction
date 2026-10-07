@@ -8,6 +8,7 @@ import {
   type ExtensionContext,
   type SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
+import { preserveAffinityContext } from "./cache-affinity.js";
 import {
   buildReplacementHistory,
   type CodexCheckpointDetails,
@@ -34,6 +35,11 @@ import { type CompactionRoute, resolveCompactionRoute } from "./model-api.js";
 import { hasCheckpointMarker, rewriteCheckpointMarker } from "./protocol.js";
 import { RejectedRoutes, rejectionRouteKey } from "./rejection-state.js";
 import { requestRemoteCompaction } from "./remote.js";
+import {
+  isBuiltInResponsesHttpRoute,
+  REQUEST_OBSERVATION_EVENT,
+  type RequestObservationContext,
+} from "./request-observation.js";
 import {
   type CodexCompactSettings,
   type CodexCompactSettingsRuntime,
@@ -216,11 +222,35 @@ async function compactRemotely(
     const provider = ctx.modelRegistry.getProvider(model.provider);
     if (!provider) throw new Error("The active Responses provider is unavailable");
     const current = projectedCurrentMessages(event, model, route);
-    const context: Context = {
+    const preserveCacheAffinity = settings.preserveCacheAffinity === true && route.protocol === "context-management";
+    const preparedContext: Context = {
       systemPrompt: ctx.getSystemPrompt(),
       messages: convertToLlm(current.messages),
       tools: activeTools(pi),
     };
+    const context = preserveCacheAffinity ? preserveAffinityContext(preparedContext) : preparedContext;
+    const requestObservation: RequestObservationContext | undefined =
+      settings.requestDiagnostics && route.protocol === "context-management"
+        ? {
+            sessionId,
+            provider: model.provider,
+            api: model.api,
+            model: model.id,
+            httpFinalEligible: fetch === undefined && isBuiltInResponsesHttpRoute(model.provider, model.api),
+            canCorrelateFetch: fetch === undefined,
+            isCurrent: () =>
+              isCurrent() &&
+              ctx.sessionManager.getSessionId() === sessionId &&
+              ctx.sessionManager.getBranch().at(-1)?.id === leafId,
+            emit: (observation) => {
+              try {
+                pi.events.emit(REQUEST_OBSERVATION_EVENT, observation);
+              } catch {
+                // The versioned observation bus is optional and never owns compaction behavior.
+              }
+            },
+          }
+        : undefined;
     const response = await requestRemoteCompaction({
       provider,
       model,
@@ -243,6 +273,8 @@ async function compactRemotely(
         const error = streamOperationRejection(raw);
         if (error) recordRejection(error);
       },
+      ...(requestObservation ? { requestObservation } : {}),
+      ...(preserveCacheAffinity ? { preserveCacheAffinity: true, sessionId } : {}),
       fetch: async (input, init) => {
         if (!stillCurrent()) throw new Error("Compaction ownership changed before dispatch");
         const endpoint = input instanceof Request ? input.url : String(input);

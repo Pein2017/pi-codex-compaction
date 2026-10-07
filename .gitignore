@@ -200,7 +200,7 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
-# Project
+# Project-local runtime, scratch, and generated verification fixtures.
 .local/
 .pi/agent/
 .pi/skills/

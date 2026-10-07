@@ -15,7 +15,9 @@ type Action =
   | "set-retries"
   | "set-retention"
   | "set-notify"
-  | "set-recovery";
+  | "set-recovery"
+  | "set-request-diagnostics"
+  | "set-cache-affinity";
 
 export interface SettingsMenuOwner {
   signal: AbortSignal;
@@ -196,6 +198,24 @@ export function createCodexCompactMenu(
             values: ["On", "Off"],
             action: "set-notify",
           },
+          {
+            id: "preserveCacheAffinity",
+            label: "Preserve cache affinity (experimental)",
+            description:
+              "Context Management only: forward session identity and use provider-default retention. No cache-hit guarantee.",
+            currentValue: state.settings.preserveCacheAffinity ? "On" : "Off",
+            values: ["On", "Off"],
+            action: "set-cache-affinity",
+          },
+          {
+            id: "requestDiagnostics",
+            label: "Request diagnostics (experimental)",
+            description:
+              "Emit bounded Context Management request and raw terminal observations. Trusted listeners can see the request body in memory.",
+            currentValue: state.settings.requestDiagnostics ? "On" : "Off",
+            values: ["On", "Off"],
+            action: "set-request-diagnostics",
+          },
         ],
       }),
       invalid: ({ state }) => ({
@@ -242,6 +262,10 @@ export function createCodexCompactMenu(
       "set-retention": ({ ctx, value, signal }) =>
         update(runtime, ctx, { replacementTokenBudget: Number.parseInt(value ?? "64", 10) * 1000 }, signal),
       "set-notify": ({ ctx, value, signal }) => update(runtime, ctx, { notifyOnFallback: value === "On" }, signal),
+      "set-cache-affinity": ({ ctx, value, signal }) =>
+        update(runtime, ctx, { preserveCacheAffinity: value === "On" }, signal),
+      "set-request-diagnostics": ({ ctx, value, signal }) =>
+        update(runtime, ctx, { requestDiagnostics: value === "On" }, signal),
     },
   };
 }

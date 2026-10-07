@@ -103,7 +103,9 @@ There is no environment-variable or project-level override.
   "maxRetries": 2,
   "replacementTokenBudget": 64000,
   "notifyOnFallback": true,
-  "checkpointRecovery": "summarize"
+  "checkpointRecovery": "summarize",
+  "requestDiagnostics": false,
+  "preserveCacheAffinity": false
 }
 ```
 
@@ -118,6 +120,8 @@ There is no environment-variable or project-level override.
 | `replacementTokenBudget` | `64000` | Integer from 8,000 to 128,000 tokens | Bound approximate retained user-message text; for Context Management, bound serialized post-checkpoint output instead. | Keep 64K. Context Management fails closed rather than truncating an oversized suffix. |
 | `notifyOnFallback` | `true` | Boolean | Warn on remote failure and unsuccessful checkpoint recovery. | Keep enabled so silent fallback does not hide protocol or entitlement problems. |
 | `checkpointRecovery` | `"summarize"` | `"summarize"` or `"cancel"` | After remote failure with an active checkpoint, try a normal inference summary or cancel without an extra request. Summary failure always cancels. | Use `summarize` for recovery; use `cancel` to avoid summary quota and preserve the checkpoint. |
+| `requestDiagnostics` | `false` | Boolean | Opt in to the in-memory `pi:request-observation:v1` event for Context Management compaction only. See [Request diagnostics](#experimental-request-diagnostics). | Leave off unless a trusted listener needs request-boundary diagnostics; the event includes the serialized request body. |
+| `preserveCacheAffinity` | `false` | Boolean | Experimental: Context Management forwards the originating session ID and uses provider-default retention; removes only redundant outer system/tool declarations. | Leave off for the old request contract; see [Cache affinity](#experimental-cache-affinity) before enabling. |
 
 Missing fields use defaults.
 Settings reload on every `session_start`, including `/reload`, resume, and fork.
@@ -189,6 +193,73 @@ Ordinary requests do not enable server compaction or add maintenance instruction
 
 During an unfinished automatic task, the local fork persists one deterministic continuation instruction after the completed maintenance output. Pi's existing execution loop continues without an extra user prompt or an additional extension-started turn. Manual compaction and automatic maintenance after a finished answer wait for the next prompt; [completed-answer deferral](#experimental-completed-answer-deferral) can also postpone the maintenance request itself. Newer user instructions follow the continuation and remain authoritative; completed tools must be reconciled before further actions.
 Existing checkpoints remain readable in this fork. Checkpoints containing the new continuation item require this fork's reader; the unmodified upstream reader does not accept that item.
+
+### Experimental cache affinity
+
+Enable **Preserve cache affinity (experimental)** in `/codex-compact` → **Settings**, or set `"preserveCacheAffinity": true` in the global settings file and reload. It affects only `context-management`: the provider receives the public originating session ID, and the extension stops forcing `cacheRetention: "none"`. Provider defaults, resolved environment, authentication, compatibility flags, and the original model remain authoritative. The provider may emit a cache key or omit unsupported retention fields; this is not a cache-hit guarantee. No affinity option is read from Pi core settings, cache warming is unchanged, and `PI_CACHE_RETENTION=none` is not an SDK disable switch. Set this extension option to **false** to restore its previous no-affinity contract. Absent/false and other protocols retain their prior preparation and transport behavior.
+
+The opt-in path also avoids prepending a second effective system prompt or active tool list when the persisted transcript already declares exactly the same content and ordered definitions. It retains every persisted system message, section update, tool delta, and opaque checkpoint. Because public tool discovery omits sampling constraints, an absent outer `constrainedSampling` leaves the persisted constraint intact; an explicit outer `false` or configuration must match the persisted value before its declaration can be omitted. Changed constraints and any other explicit outer fields not proven equal keep the outer declaration. Legacy history without declarations still receives the effective system and tools. When the effective prompt differs from persisted instructions (including forced prompts), neither is discarded: both remain and prefix equality is **not** claimed. This conservative behavior cannot reproduce every ordinary context-hook transformation; ephemeral recall is not frozen or accessed through another extension's private state.
+
+Installed-SDK loopback qualification compares final ordinary and maintenance input, ordered tools and instructions, and explicitly locates the first divergence. Maintenance intentionally appends its own instruction and uses `store: false` and `tool_choice: "none"`; replacing history with an opaque checkpoint starts a new prefix epoch. Compatible replay preserves that checkpoint and later tail, including automatic task continuation without repeating completed tools. Deterministic request fidelity is not evidence of hosted cache benefit or recall quality. Diagnostics are independently opt-in; see below for observing the actually emitted cache fields.
+
+### Experimental request diagnostics
+
+Set `"requestDiagnostics": true` in the global settings file or enable **Request diagnostics (experimental)** in `/codex-compact` → **Settings**. The default is off. This setting only observes extension-owned `context-management` compaction; ordinary inference, Remote V2, unary Compact API, checkpoint-recovery summaries, and other traffic remain unobserved.
+
+This independently installable package emits the extension-neutral event `pi:request-observation:v1` through Pi's `pi.events` / SDK `eventBus`; no Web package or private cross-package import is required. The event is a frozen envelope with the following common fields:
+
+```ts
+{
+  version: 1;
+  phase: "dispatch" | "terminal" | "unobserved";
+  sessionId: string;
+  operationId: string;
+  attemptId: string;
+  provider: string;
+  api: string;
+  model: string;
+  kind: "compaction";
+}
+```
+
+`sessionId`, `operationId`, `attemptId`, provider/API/model identifiers, and optional `responseId` are nonempty, bounded strings. `operationId` identifies one Context Management operation; every observed fetch invocation gets a distinct `attemptId`. The literal `"unknown"` is reserved for an attempt that cannot be attributed or a phase with no observed fetch. Terminal events use `attemptId: "unknown"` rather than guessing the last attempt. No public `attribution` field is emitted; a listener may persist exact attribution only after matching session, operation, attempt, provider, API, model, and kind.
+
+Phase-specific fields are:
+
+```ts
+// Dispatch at the existing Context Management fetch wrapper, after onPayload.
+{ body: string; coverage: "http-final" | "unknown" }
+
+// Detached raw terminal metadata.
+{
+  status: "completed" | "error" | "aborted";
+  usage: {
+    cachedTokensState: "absent" | "zero" | "value" | "invalid";
+    cachedTokens?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+  };
+  responseId?: string;
+}
+
+// A reason why final body observation or attempt attribution is unavailable.
+{
+  reason:
+    | "unsupported-adapter"
+    | "custom-fetch"
+    | "transport-unobserved"
+    | "body-unmaterialized"
+    | "body-oversized"
+    | "observation-failed"
+    | "attribution-unknown";
+}
+```
+
+A `dispatch` body is the exact serialized string visible at this extension's wrapper and is admitted only up to 8 MiB UTF-8. `coverage: "http-final"` is used only for the built-in HTTP Responses routes without a caller-supplied fetch. A caller-supplied fetch may transform the body: its materialized wrapper input can be reported with `coverage: "unknown"` and a `custom-fetch` unobserved marker, never as HTTP-final evidence. `cachedTokensState` describes raw `input_tokens_details.cached_tokens` presence/value: absent omits `cachedTokens`, zero includes `0`, value is positive, and invalid omits the unusable count. Optional input/output counts are nonnegative safe integers. Usage is detached and frozen; no provider object, headers, credentials, response body, or error text is included.
+
+The `unobserved` reasons are exactly `unsupported-adapter`, `custom-fetch`, `transport-unobserved`, `body-unmaterialized`, `body-oversized`, `observation-failed`, and `attribution-unknown`. They respectively mark an unqualified adapter, a caller-supplied fetch, no observed HTTP dispatch, a non-string body, a body above the admission limit, an observation failure, and an ambiguous terminal attempt. Observation-failure reporting is best-effort when the event callback itself is failing.
+
+Diagnostics add no provider participant or request and do not consume responses or change retry, cancellation, or checkpoint behavior. Listener exceptions and mutation attempts are isolated from compaction. The extension does not persist or log events, but trusted Pi extensions can receive the request body in memory; leave diagnostics disabled if those listeners are not trusted. Cancelling or replacing the owning session closes its observation before late events can be emitted.
 
 ### ChatGPT OAuth rejection
 

@@ -12,6 +12,11 @@ import {
   type RemoteCompactionRequest,
   type RemoteCompactionResponse,
 } from "./remote-types.js";
+import {
+  captureRequestObservationTerminal,
+  createRequestObservationSession,
+  emptyRequestObservationUsage,
+} from "./request-observation.js";
 
 export async function requestContextManagement(request: RemoteCompactionRequest): Promise<RemoteCompactionResponse> {
   if (request.signal.aborted) throw abortError();
@@ -22,6 +27,10 @@ export async function requestContextManagement(request: RemoteCompactionRequest)
     request.requestTimeoutMs ?? 300_000,
   );
   const collector = createContextManagementCollector();
+  const observation = request.requestObservation
+    ? createRequestObservationSession(request.requestObservation)
+    : undefined;
+  let observedTerminal: ReturnType<typeof captureRequestObservationTerminal>;
   let sentInput: ReturnType<typeof assertPreparedInput> | undefined;
   let successes = 0;
   const baseFetch = request.fetch ?? globalThis.fetch;
@@ -37,14 +46,18 @@ export async function requestContextManagement(request: RemoteCompactionRequest)
       env: request.env,
       signal,
       transport: "sse",
-      cacheRetention: "none",
+      ...(request.preserveCacheAffinity === true
+        ? { sessionId: request.sessionId }
+        : { cacheRetention: "none" as const }),
       timeoutMs: request.requestTimeoutMs ?? 300_000,
       maxRetries: request.maxRetries ?? 2,
       fetch: async (input, init) => {
+        const attemptId = observation?.dispatch(init?.body);
         const response = await baseFetch(input, {
           ...init,
           signal: AbortSignal.any([signal, ...(init?.signal ? [init.signal] : [])]),
         });
+        if (attemptId) observation?.markResponse(attemptId, response.ok);
         if (signal.aborted) {
           void response.body?.cancel().catch(() => undefined);
           throw abortError();
@@ -101,6 +114,10 @@ export async function requestContextManagement(request: RemoteCompactionRequest)
         return prepared;
       },
       onProviderStreamEvent: (event) => {
+        if (observation) {
+          const terminal = captureRequestObservationTerminal(event);
+          if (terminal) observedTerminal = terminal;
+        }
         request.onProviderStreamEvent?.(event);
         collector.observe(event);
       },
@@ -115,6 +132,16 @@ export async function requestContextManagement(request: RemoteCompactionRequest)
     const replacementHistory = collector.finish();
     return { item: replacementHistory[0], replacementHistory, promptInput: sentInput, usage };
   } finally {
+    if (observation) {
+      observation.noHttpDispatch();
+      observation.terminal(
+        observedTerminal ?? {
+          status: signal.aborted ? "aborted" : "error",
+          usage: emptyRequestObservationUsage(),
+        },
+      );
+      observation.dispose();
+    }
     clearTimeout(timeout);
     if (onAbort) signal.removeEventListener("abort", onAbort);
     controller.abort();

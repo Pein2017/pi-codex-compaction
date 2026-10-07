@@ -92,31 +92,61 @@ async function measure(extensionEntries, benchmarkOptions) {
       env: childEnvironment(process.env, root, benchmarkOptions.cacheMode),
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const timeout = setTimeout(() => child.kill("SIGKILL"), benchmarkOptions.timeoutMs);
+    // Pi has no unsolicited ready event. Probe the real RPC caller before arming
+    // the command deadline; process spawn alone does not establish readiness.
+    let phase = "readiness";
+    let timedOut = false;
+    let stdinError;
+    const expire = () => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    };
+    let timeout = setTimeout(expire, benchmarkOptions.readyTimeoutMs);
+    const exitPromise = new Promise((resolveExit, reject) => {
+      child.once("error", reject);
+      // close follows drained stdio; exit alone may lose the last response chunk.
+      child.once("close", (code, signal) => resolveExit({ code, signal }));
+    });
+    child.stdin.on("error", (error) => {
+      stdinError = error;
+      child.kill("SIGKILL");
+    });
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
-      if (firstResponseMs === undefined && hasSuccessfulCommandResponse(stdout)) {
+      if (
+        phase === "readiness" &&
+        !timedOut &&
+        hasSuccessfulCommandResponse(stdout, "get_state", "startup-readiness")
+      ) {
+        clearTimeout(timeout);
+        phase = "command";
+        timeout = setTimeout(expire, benchmarkOptions.timeoutMs);
+        child.stdin.end(`${JSON.stringify({ type: "get_commands", id: "startup-commands" })}\n`);
+      }
+      if (
+        phase === "command" &&
+        firstResponseMs === undefined &&
+        hasSuccessfulCommandResponse(stdout, "get_commands", "startup-commands")
+      ) {
+        // Still spawn -> get_commands response, including the additional readiness probe.
         firstResponseMs = performance.now() - startedAt;
       }
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
-    child.stdin.end(`${JSON.stringify({ type: "get_commands" })}\n`);
+    child.stdin.write(`${JSON.stringify({ type: "get_state", id: "startup-readiness" })}\n`);
     let exit;
     try {
-      exit = await new Promise((resolveExit, reject) => {
-        child.once("error", reject);
-        child.once("exit", (code, signal) => resolveExit({ code, signal }));
-      });
+      exit = await exitPromise;
     } finally {
       clearTimeout(timeout);
     }
-    if (exit.code !== 0 || firstResponseMs === undefined) {
+    if (exit.code !== 0 || firstResponseMs === undefined || timedOut || stdinError) {
       throw new Error(
-        `Pi benchmark failed (code=${exit.code}, signal=${exit.signal ?? "none"}).\n${stderr}\n${stdout}`,
+        `Pi benchmark failed (phase=${phase}, code=${exit.code}, signal=${exit.signal ?? "none"}, timedOut=${timedOut}).\n${stderr}\n${stdout}`,
       );
     }
     const timings = parseExtensionTimings(stderr, { allowEmpty: extensionEntries.length === 0 });
@@ -141,12 +171,12 @@ export function childEnvironment(environment, agentDir, cacheMode) {
   };
 }
 
-function hasSuccessfulCommandResponse(output) {
+function hasSuccessfulCommandResponse(output, command, id) {
   for (const line of output.split("\n")) {
     if (!line.trim()) continue;
     try {
       const message = JSON.parse(line);
-      if (message?.type === "response" && message.command === "get_commands") {
+      if (message?.type === "response" && message.command === command && message.id === id) {
         return message.success === true;
       }
     } catch {
@@ -208,6 +238,7 @@ export function parseArguments(args, environment = process.env) {
     piArgs: [],
     runs: DEFAULT_RUNS,
     timeoutMs: DEFAULT_TIMEOUT_MS,
+    readyTimeoutMs: DEFAULT_TIMEOUT_MS,
   };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -225,6 +256,8 @@ export function parseArguments(args, environment = process.env) {
       parsed.runs = positiveInteger(requireValue(args, ++index, argument), argument);
     } else if (argument === "--timeout-ms") {
       parsed.timeoutMs = positiveInteger(requireValue(args, ++index, argument), argument);
+    } else if (argument === "--ready-timeout-ms") {
+      parsed.readyTimeoutMs = positiveInteger(requireValue(args, ++index, argument), argument);
     } else throw new Error(`Unknown argument: ${argument}`);
   }
   return parsed;
@@ -250,7 +283,11 @@ function printHelp() {
   process.stdout.write(`      --pi <path>           Pi executable (default: pi)\n`);
   process.stdout.write(`      --pi-arg <value>      Argument prepended to the Pi invocation (repeatable)\n`);
   process.stdout.write(`      --runs <count>        Measured runs after one warm-up (default: ${DEFAULT_RUNS})\n`);
-  process.stdout.write(`      --timeout-ms <n>      Per-run timeout (default: ${DEFAULT_TIMEOUT_MS})\n`);
+  process.stdout.write(
+    `      --timeout-ms <n>      Post-readiness command/exit timeout (default: ${DEFAULT_TIMEOUT_MS})\n`,
+  );
+  process.stdout.write(`      --ready-timeout-ms <n>  Startup/get_state deadline (default: ${DEFAULT_TIMEOUT_MS})\n`);
+  process.stdout.write(`\nfirstResponseMs includes spawn through get_commands, with one get_state readiness probe.\n`);
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : undefined;

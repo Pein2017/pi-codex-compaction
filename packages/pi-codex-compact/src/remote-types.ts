@@ -1,6 +1,7 @@
 import type { Api, Context, Model, Provider, ProviderHeaders, Usage } from "@earendil-works/pi-ai";
 import type { RemoteCompactionProtocol, ResponsesCompactionProfile } from "./model-api.js";
 import type { JsonObject } from "./protocol.js";
+import type { RequestObservationContext } from "./request-observation.js";
 
 export interface PriorCheckpointPayload {
   marker: string;
@@ -22,6 +23,10 @@ export interface RemoteCompactionRequest {
   maxRetries?: number;
   fetch?: typeof globalThis.fetch;
   onProviderStreamEvent?: (event: unknown) => void;
+  requestObservation?: RequestObservationContext;
+  /** Experimental; only the Context Management adapter consumes these fields. */
+  preserveCacheAffinity?: boolean;
+  sessionId?: string;
 }
 
 export interface RemoteCompactionResponse {

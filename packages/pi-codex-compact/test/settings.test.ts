@@ -30,6 +30,7 @@ test("normalizes defaults and bounded user settings", () => {
       protocol: "responses-compact",
       apiProfiles: { "custom-responses": "codex-responses-v1" },
       maxRetries: 0,
+      requestDiagnostics: true,
     }),
     {
       ...DEFAULT_CODEX_COMPACT_SETTINGS,
@@ -37,9 +38,13 @@ test("normalizes defaults and bounded user settings", () => {
       protocol: "responses-compact",
       apiProfiles: { "custom-responses": "codex-responses-v1" },
       maxRetries: 0,
+      requestDiagnostics: true,
     },
   );
   assert.equal(normalizeCodexCompactSettings({ protocol: "unknown" }), undefined);
+  assert.equal(normalizeCodexCompactSettings({ requestDiagnostics: true })?.requestDiagnostics, true);
+  for (const value of [null, 0, "true", {}, []])
+    assert.equal(normalizeCodexCompactSettings({ requestDiagnostics: value }), undefined);
   assert.equal(normalizeCodexCompactSettings({ deferPostAnswerCompaction: true })?.deferPostAnswerCompaction, true);
   for (const value of [null, 0, "true", {}, []])
     assert.equal(normalizeCodexCompactSettings({ deferPostAnswerCompaction: value }), undefined);
@@ -108,6 +113,7 @@ test("serialized updates reread latest content, preserve unknown fields, and pub
     runtime.update({ maxRetries: 0 }),
     runtime.update({ protocol: "context-management" }),
     runtime.update({ deferPostAnswerCompaction: true }),
+    runtime.update({ requestDiagnostics: true }),
   ]);
   await runtime.flush();
   const document = JSON.parse(await readFile(path, "utf8"));
@@ -116,7 +122,9 @@ test("serialized updates reread latest content, preserve unknown fields, and pub
   assert.equal(document.external, "newer");
   assert.equal(document.protocol, "context-management");
   assert.equal(document.deferPostAnswerCompaction, true);
+  assert.equal(document.requestDiagnostics, true);
   assert.equal((await runtime.reload()).settings.protocol, "context-management");
+  assert.equal((await runtime.reload()).settings.requestDiagnostics, true);
   assert.deepEqual(
     (await readdir(join(path, ".."))).filter((name) => name.endsWith(".tmp")),
     [],
